@@ -1,0 +1,10 @@
+[package]
+name = "pdf-postprocess"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+headless_chrome = "1.0.12"
+log = "0.4.22"
+tracing-subscriber = "0.3.18"
+walkdir = "2.5.0"
