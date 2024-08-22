@@ -83,7 +83,7 @@ To build this project on Linux using Nix, follow these steps:
 3. **Clone the repository and enter the Nix shell**:
 
    ```bash
-   git clone https://github.com/yourusername/pdf-postprocess.git
+   git clone https://github.com/Losses/pdf-postprocess.git
    cd pdf-postprocess
    nix develop
    ```

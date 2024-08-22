@@ -50,25 +50,25 @@ fn process_element(element: &mut Element) -> Result<(), Box<dyn Error + Send + S
                             let decoded_element: Element =
                                 Element::parse(Cursor::new(decoded_svg))?;
 
-                            // Create a new <g> element to wrap the decoded SVG content
+                            // Create a new <svg> element to wrap the decoded SVG content
                             let mut group_element = Element::new("svg");
 
-                            // Transfer the attributes from the <image> element to the <g> element
+                            // Transfer the attributes from the <image> element to the <svg> element
                             for (key, value) in &element.attributes {
                                 if key != "xlink:href" && key != "href" {
-                                    // Exclude the xlink:href attribute
+                                    // Exclude the xlink:href, href attribute
                                     group_element.attributes.insert(key.clone(), value.clone());
                                 }
                             }
 
                             for (key, value) in &decoded_element.attributes {
                                 if key != "xmlns" {
-                                    // Exclude the xlink:href attribute
+                                    // Exclude the xmlns attribute
                                     group_element.attributes.insert(key.clone(), value.clone());
                                 }
                             }
 
-                            // Add the decoded SVG content as children of the <g> element
+                            // Add the decoded SVG content as children of the <svg> element
                             for child in decoded_element.children {
                                 group_element.children.push(child);
                             }
