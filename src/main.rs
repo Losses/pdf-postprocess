@@ -47,8 +47,25 @@ fn process_element(element: &mut Element) -> Result<(), Box<dyn Error>> {
                             // Parse the decoded SVG content as an XML element
                             let decoded_element: Element =
                                 Element::parse(Cursor::new(decoded_svg))?;
-                            // Replace the <image> element with the decoded SVG content
-                            *element = decoded_element;
+
+                            // Create a new <g> element to wrap the decoded SVG content
+                            let mut group_element = Element::new("g");
+
+                            // Transfer the attributes from the <image> element to the <g> element
+                            for (key, value) in &element.attributes {
+                                if key != "xlink:href" && key != "href" {
+                                    // Exclude the xlink:href attribute
+                                    group_element.attributes.insert(key.clone(), value.clone());
+                                }
+                            }
+
+                            // Add the decoded SVG content as children of the <g> element
+                            for child in decoded_element.children {
+                                group_element.children.push(child);
+                            }
+
+                            // Replace the <image> element with the group_element SVG content
+                            *element = group_element;
                         }
                         Err(_) => {
                             // Handle UTF-8 error, keep the original
@@ -113,7 +130,7 @@ fn render_svg_to_pdf(svg_path: &str, pdf_path: &str) -> Result<(), Box<dyn std::
     pdf_surface.finish();
 
     // Remove the temporary expanded SVG file
-    // fs::remove_file(&expanded_svg_path)?;
+    fs::remove_file(&expanded_svg_path)?;
 
     Ok(())
 }
