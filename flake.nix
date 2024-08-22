@@ -23,9 +23,13 @@
             pkg-config
             eza
             fd
-            alsa-lib
+            cairo
+            librsvg
 
-            rust-bin.beta.latest.default
+            # Use rust package from rust-overlay
+            (rust-bin.beta.latest.default.override {
+              extensions = [ "rust-src" ];
+            })
           ];
 
           shellHook = ''

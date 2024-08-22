@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-headless_chrome = "1.0.12"
+cairo-rs = { version = "0.20.1", features=["pdf"]}
+rsvg = "0.1.0"
 log = "0.4.22"
 lopdf = "0.33.0"
 tracing-subscriber = { version = "0.3.18", features=["env-filter"]}

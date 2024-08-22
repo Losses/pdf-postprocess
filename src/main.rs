@@ -1,46 +1,38 @@
-use headless_chrome::types::PrintToPdfOptions;
-use headless_chrome::{Browser, LaunchOptions, Tab};
 use log::info;
 use lopdf::{Document, Object, ObjectId};
 use std::collections::BTreeMap;
-use std::ffi::OsStr;
-use std::fs::{remove_file, File};
-use std::io::Write;
+use std::env;
+use std::fs::remove_file;
 use std::path::{Path, PathBuf};
 use tracing_subscriber::filter::EnvFilter;
 use walkdir::WalkDir;
 
-fn convert_svg_to_pdf(
-    tab: &Tab,
-    svg_path: &Path,
-    output_path: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let svg_path_str = format!("file://{}", svg_path.to_str().unwrap());
-    tab.navigate_to(&svg_path_str)?;
-    tab.wait_until_navigated()?;
+fn render_svg_to_pdf(svg_path: &str, pdf_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use librsvg_rebind::prelude::HandleExt;
 
-    let pdf_options = PrintToPdfOptions {
-        landscape: Some(false),
-        display_header_footer: Some(false),
-        print_background: Some(true),
-        scale: Some(1.0),
-        paper_width: Some(8.26),   // A4 size in inches
-        paper_height: Some(11.69), // A4 size in inches
-        margin_top: Some(0.0),
-        margin_bottom: Some(0.0),
-        margin_left: Some(0.0),
-        margin_right: Some(0.0),
-        page_ranges: None,
-        ignore_invalid_page_ranges: Some(false),
-        header_template: None,
-        footer_template: None,
-        prefer_css_page_size: Some(true),
-        transfer_mode: None,
-    };
+    // Set the environment variable to allow huge XML files
+    env::set_var("XML_PARSE_HUGE", "1");
 
-    let pdf_data = tab.print_to_pdf(Some(pdf_options))?;
-    let mut file = File::create(output_path)?;
-    file.write_all(&pdf_data)?;
+    // Load the SVG file
+    let handle = librsvg_rebind::Handle::from_file(svg_path)?.ok_or("Failed to load SVG file")?;
+
+    // Get the intrinsic size of the SVG in pixels
+    let (width, height) = handle
+        .intrinsic_size_in_pixels()
+        .ok_or("Failed to get intrinsic size")?;
+
+    // Create a PDF surface
+    let pdf_surface = cairo::PdfSurface::new(width as f64, height as f64, pdf_path)?;
+    let context = cairo::Context::new(&pdf_surface)?;
+
+    // Define the viewport for rendering
+    let viewport = librsvg_rebind::Rectangle::new(0., 0., width as f64, height as f64);
+
+    // Render the SVG onto the PDF surface
+    handle.render_document(&context, &viewport)?;
+
+    // Finish the PDF surface to ensure all data is written
+    pdf_surface.finish();
 
     Ok(())
 }
@@ -206,19 +198,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let svg_dir = std::env::args()
         .nth(1)
         .expect("Please provide a directory path");
-    let output_dir = std::env::args()
-        .nth(2)
-        .expect("Please provide an output directory path");
-
-    let args = vec![OsStr::new("--headless")];
-    let browser = Browser::new(
-        LaunchOptions::default_builder()
-            .headless(true)
-            .args(args)
-            .build()
-            .unwrap(),
-    )?;
-    let tab = browser.new_tab()?;
 
     let mut output_files = Vec::new();
 
@@ -226,9 +205,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if entry.path().extension().and_then(|s| s.to_str()) == Some("svg") {
             let svg_path = entry.path();
             let file_name = svg_path.file_stem().unwrap().to_str().unwrap();
-            let output_path = PathBuf::from(&output_dir).join(format!("{}.pdf", file_name));
+            let output_path = PathBuf::from(&svg_dir).join(format!("{}.pdf", file_name));
 
-            convert_svg_to_pdf(&tab, svg_path, &output_path)?;
+            render_svg_to_pdf(svg_path.to_str().unwrap(), output_path.to_str().unwrap())?;
             output_files.push(output_path);
         }
     }
@@ -236,7 +215,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     output_files.sort();
 
     info!("Merging all files into a single report");
-    let merged_output_path = PathBuf::from(&output_dir).join("merged.pdf");
+    let merged_output_path = PathBuf::from(&svg_dir).join("merged.pdf");
     merge_pdfs(output_files.clone(), &merged_output_path)?;
 
     for output_file in output_files {
