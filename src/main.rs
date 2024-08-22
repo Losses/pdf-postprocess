@@ -1,20 +1,33 @@
 use log::info;
 use lopdf::{Document, Object, ObjectId};
 use std::collections::BTreeMap;
-use std::env;
 use std::fs::remove_file;
 use std::path::{Path, PathBuf};
 use tracing_subscriber::filter::EnvFilter;
 use walkdir::WalkDir;
 
 fn render_svg_to_pdf(svg_path: &str, pdf_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use gio::File;
     use librsvg_rebind::prelude::HandleExt;
+    use librsvg_rebind::{Handle, HandleFlags};
 
-    // Set the environment variable to allow huge XML files
-    env::set_var("XML_PARSE_HUGE", "1");
+    // Set the required flags
+    let flags = HandleFlags::FLAG_UNLIMITED | HandleFlags::FLAG_KEEP_IMAGE_DATA;
 
-    // Load the SVG file
-    let handle = librsvg_rebind::Handle::from_file(svg_path)?.ok_or("Failed to load SVG file")?;
+    // Create a GFile from the file path
+    let file = File::for_path(svg_path);
+    let handle = match Handle::from_gfile_sync(&file, flags, None::<&gio::Cancellable>) {
+        Ok(Some(handle)) => {
+            info!("Reading SVG File: {}", svg_path);
+            handle
+        }
+        Ok(None) => {
+            return Err("The SVG file is empty or could not be read.".into());
+        }
+        Err(e) => {
+            return Err(format!("Failed to read the SVG file: {:?}", e).into());
+        }
+    };
 
     // Get the intrinsic size of the SVG in pixels
     let (width, height) = handle
@@ -23,7 +36,7 @@ fn render_svg_to_pdf(svg_path: &str, pdf_path: &str) -> Result<(), Box<dyn std::
 
     // Create a PDF surface
     let pdf_surface = cairo::PdfSurface::new(width as f64, height as f64, pdf_path)?;
-    let context = cairo::Context::new(&pdf_surface)?;
+    let context = cairo::Context::new(&pdf_surface).unwrap();
 
     // Define the viewport for rendering
     let viewport = librsvg_rebind::Rectangle::new(0., 0., width as f64, height as f64);
@@ -219,7 +232,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     merge_pdfs(output_files.clone(), &merged_output_path)?;
 
     for output_file in output_files {
-        info!("Cleaning file:{:?}", &output_file);
+        info!("Cleaning file: {:?}", &output_file);
         remove_file(output_file)?;
     }
 
