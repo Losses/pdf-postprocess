@@ -1,26 +1,94 @@
+use base64::Engine;
 use log::info;
 use lopdf::{Document, Object, ObjectId};
 use std::collections::BTreeMap;
+use std::error::Error;
 use std::fs::remove_file;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::str;
 use tracing_subscriber::filter::EnvFilter;
 use walkdir::WalkDir;
+use xmltree::Element;
+use xmltree::EmitterConfig;
+use xmltree::XMLNode;
+
+fn expand_base64_svgs(svg_content: &str) -> Result<String, Box<dyn Error>> {
+    // Parse the SVG content as an XML element
+    let mut root: Element = Element::parse(Cursor::new(svg_content))?;
+
+    // Recursively process the XML tree to decode base64 SVG images
+    process_element(&mut root)?;
+
+    // Convert the modified XML tree back to a string
+    let mut output = Vec::new();
+    root.write_with_config(&mut output, EmitterConfig::default())?;
+    let result = String::from_utf8(output)?;
+
+    Ok(result)
+}
+
+fn process_element(element: &mut Element) -> Result<(), Box<dyn Error>> {
+    // Process all child elements
+    for child in &mut element.children {
+        if let XMLNode::Element(ref mut child_element) = child {
+            process_element(child_element)?;
+        }
+    }
+
+    // Check if the element is an <image> element with a base64-encoded SVG in the xlink:href attribute
+    if element.name == "image" {
+        if let Some(href) = element.attributes.get("href") {
+            if href.starts_with("data:image/svg+xml;base64,") {
+                let base64_data = &href["data:image/svg+xml;base64,".len()..];
+                match base64::prelude::BASE64_STANDARD.decode(base64_data) {
+                    Ok(decoded_bytes) => match str::from_utf8(&decoded_bytes) {
+                        Ok(decoded_svg) => {
+                            // Parse the decoded SVG content as an XML element
+                            let decoded_element: Element =
+                                Element::parse(Cursor::new(decoded_svg))?;
+                            // Replace the <image> element with the decoded SVG content
+                            *element = decoded_element;
+                        }
+                        Err(_) => {
+                            // Handle UTF-8 error, keep the original
+                        }
+                    },
+                    Err(_) => {
+                        // Handle base64 decode error, keep the original
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
 
 fn render_svg_to_pdf(svg_path: &str, pdf_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     use gio::File;
     use librsvg_rebind::prelude::HandleExt;
     use librsvg_rebind::{Handle, HandleFlags};
+    use std::fs;
+
+    info!("Reading SVG File: {}", svg_path);
+
+    // Read the SVG file content
+    let svg_content = fs::read_to_string(svg_path)?;
+    // Expand base64 encoded SVGs
+    let expanded_svg_content = expand_base64_svgs(&svg_content)?;
+
+    // Write the expanded SVG content back to a temporary file
+    let expanded_svg_path = format!("{}_expanded.svg", svg_path);
+    fs::write(&expanded_svg_path, expanded_svg_content)?;
 
     // Set the required flags
     let flags = HandleFlags::FLAG_UNLIMITED | HandleFlags::FLAG_KEEP_IMAGE_DATA;
 
     // Create a GFile from the file path
-    let file = File::for_path(svg_path);
+    let file = File::for_path(&expanded_svg_path);
     let handle = match Handle::from_gfile_sync(&file, flags, None::<&gio::Cancellable>) {
-        Ok(Some(handle)) => {
-            info!("Reading SVG File: {}", svg_path);
-            handle
-        }
+        Ok(Some(handle)) => handle,
         Ok(None) => {
             return Err("The SVG file is empty or could not be read.".into());
         }
@@ -36,16 +104,16 @@ fn render_svg_to_pdf(svg_path: &str, pdf_path: &str) -> Result<(), Box<dyn std::
 
     // Create a PDF surface
     let pdf_surface = cairo::PdfSurface::new(width as f64, height as f64, pdf_path)?;
-    let context = cairo::Context::new(&pdf_surface).unwrap();
-
+    let pdf_context = cairo::Context::new(&pdf_surface).unwrap();
     // Define the viewport for rendering
-    let viewport = librsvg_rebind::Rectangle::new(0., 0., width as f64, height as f64);
-
+    let pdf_viewport = librsvg_rebind::Rectangle::new(0., 0., width as f64, height as f64);
     // Render the SVG onto the PDF surface
-    handle.render_document(&context, &viewport)?;
-
+    handle.render_document(&pdf_context, &pdf_viewport)?;
     // Finish the PDF surface to ensure all data is written
     pdf_surface.finish();
+
+    // Remove the temporary expanded SVG file
+    // fs::remove_file(&expanded_svg_path)?;
 
     Ok(())
 }
