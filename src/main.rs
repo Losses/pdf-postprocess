@@ -1,19 +1,21 @@
 use base64::Engine;
 use log::info;
 use lopdf::{Document, Object, ObjectId};
+use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs::remove_file;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::str;
+use std::sync::{Arc, Mutex};
 use tracing_subscriber::filter::EnvFilter;
 use walkdir::WalkDir;
 use xmltree::Element;
 use xmltree::EmitterConfig;
 use xmltree::XMLNode;
 
-fn expand_base64_svgs(svg_content: &str) -> Result<String, Box<dyn Error>> {
+fn expand_base64_svgs(svg_content: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
     // Parse the SVG content as an XML element
     let mut root: Element = Element::parse(Cursor::new(svg_content))?;
 
@@ -28,7 +30,7 @@ fn expand_base64_svgs(svg_content: &str) -> Result<String, Box<dyn Error>> {
     Ok(result)
 }
 
-fn process_element(element: &mut Element) -> Result<(), Box<dyn Error>> {
+fn process_element(element: &mut Element) -> Result<(), Box<dyn Error + Send + Sync>> {
     // Process all child elements
     for child in &mut element.children {
         if let XMLNode::Element(ref mut child_element) = child {
@@ -89,7 +91,7 @@ fn process_element(element: &mut Element) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn render_svg_to_pdf(svg_path: &str, pdf_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn render_svg_to_pdf(svg_path: &str, pdf_path: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
     use gio::File;
     use librsvg_rebind::prelude::HandleExt;
     use librsvg_rebind::{Handle, HandleFlags};
@@ -145,7 +147,7 @@ fn render_svg_to_pdf(svg_path: &str, pdf_path: &str) -> Result<(), Box<dyn std::
 fn merge_pdfs(
     output_files: Vec<PathBuf>,
     merged_output_path: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut max_id = 1;
     let mut pagenum = 1;
     let mut documents_pages = BTreeMap::new();
@@ -292,7 +294,7 @@ fn merge_pdfs(
     Ok(())
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let filter = EnvFilter::new("info");
 
     tracing_subscriber::fmt()
@@ -304,19 +306,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nth(1)
         .expect("Please provide a directory path");
 
-    let mut output_files = Vec::new();
+    let output_files = Arc::new(Mutex::new(Vec::new()));
 
-    for entry in WalkDir::new(&svg_dir).into_iter().filter_map(Result::ok) {
-        if entry.path().extension().and_then(|s| s.to_str()) == Some("svg") {
+    let svg_entries: Vec<_> = WalkDir::new(&svg_dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().and_then(|s| s.to_str()) == Some("svg"))
+        .collect();
+
+    svg_entries
+        .par_iter()
+        .try_for_each(|entry| -> Result<(), Box<dyn Error + Send + Sync>> {
             let svg_path = entry.path();
             let file_name = svg_path.file_stem().unwrap().to_str().unwrap();
             let output_path = PathBuf::from(&svg_dir).join(format!("{}.pdf", file_name));
 
             render_svg_to_pdf(svg_path.to_str().unwrap(), output_path.to_str().unwrap())?;
-            output_files.push(output_path);
-        }
-    }
+            output_files.lock().unwrap().push(output_path);
+            Ok(())
+        })?;
 
+    let mut output_files = Arc::try_unwrap(output_files).unwrap().into_inner().unwrap();
     output_files.sort();
 
     info!("Merging all files into a single report");

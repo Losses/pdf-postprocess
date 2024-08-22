@@ -623,6 +623,7 @@ dependencies = [
  "librsvg-rebind",
  "log",
  "lopdf",
+ "rayon",
  "tracing-subscriber",
  "walkdir",
  "xmltree",

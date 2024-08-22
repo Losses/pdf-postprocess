@@ -10,6 +10,7 @@ gio = "0.20.1"
 librsvg-rebind = "0.1.0"
 log = "0.4.22"
 lopdf = "0.33.0"
+rayon = "1.10.0"
 tracing-subscriber = { version = "0.3.18", features=["env-filter"]}
 walkdir = "2.5.0"
 xmltree = "0.10.3"
