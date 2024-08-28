@@ -1,26 +1,28 @@
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::fs::{read_to_string, remove_file};
+use std::io::{self, Cursor, Write};
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::{process, str};
+
+use anyhow::{anyhow, Result};
 use base64::Engine;
-use log::info;
+use log::{error, info};
 use lopdf::{Document, Object, ObjectId};
 use rayon::prelude::*;
-use std::collections::BTreeMap;
-use std::error::Error;
-use std::fs::remove_file;
-use std::io::Cursor;
-use std::path::{Path, PathBuf};
-use std::str;
-use std::sync::{Arc, Mutex};
 use tracing_subscriber::filter::EnvFilter;
 use walkdir::WalkDir;
 use xmltree::Element;
 use xmltree::EmitterConfig;
 use xmltree::XMLNode;
 
-fn expand_base64_svgs(svg_content: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
+fn expand_base64_svgs(svg_content: &str) -> Result<String> {
     // Parse the SVG content as an XML element
     let mut root: Element = Element::parse(Cursor::new(svg_content))?;
 
     // Recursively process the XML tree to decode base64 SVG images
-    process_element(&mut root)?;
+    process_element(&mut root).map_err(|e| anyhow::anyhow!(e))?;
 
     // Convert the modified XML tree back to a string
     let mut output = Vec::new();
@@ -30,7 +32,7 @@ fn expand_base64_svgs(svg_content: &str) -> Result<String, Box<dyn Error + Send 
     Ok(result)
 }
 
-fn process_element(element: &mut Element) -> Result<(), Box<dyn Error + Send + Sync>> {
+fn process_element(element: &mut Element) -> Result<()> {
     // Process all child elements
     for child in &mut element.children {
         if let XMLNode::Element(ref mut child_element) = child {
@@ -41,8 +43,7 @@ fn process_element(element: &mut Element) -> Result<(), Box<dyn Error + Send + S
     // Check if the element is an <image> element with a base64-encoded SVG in the xlink:href attribute
     if element.name == "image" {
         if let Some(href) = element.attributes.get("href") {
-            if href.starts_with("data:image/svg+xml;base64,") {
-                let base64_data = &href["data:image/svg+xml;base64,".len()..];
+            if let Some(base64_data) = href.strip_prefix("data:image/svg+xml;base64,") {
                 match base64::prelude::BASE64_STANDARD.decode(base64_data) {
                     Ok(decoded_bytes) => match str::from_utf8(&decoded_bytes) {
                         Ok(decoded_svg) => {
@@ -91,63 +92,84 @@ fn process_element(element: &mut Element) -> Result<(), Box<dyn Error + Send + S
     Ok(())
 }
 
-fn render_svg_to_pdf(svg_path: &str, pdf_path: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
-    use gio::File;
-    use librsvg_rebind::prelude::HandleExt;
-    use librsvg_rebind::{Handle, HandleFlags};
-    use std::fs;
-
-    info!("Reading SVG File: {}", svg_path);
-
-    // Read the SVG file content
-    let svg_content = fs::read_to_string(svg_path)?;
-    // Expand base64 encoded SVGs
-    let expanded_svg_content = expand_base64_svgs(&svg_content)?;
-
-    // Write the expanded SVG content back to a temporary file
-    let expanded_svg_path = format!("{}_expanded.svg", svg_path);
-    fs::write(&expanded_svg_path, expanded_svg_content)?;
-
-    // Set the required flags
-    let flags = HandleFlags::FLAG_UNLIMITED | HandleFlags::FLAG_KEEP_IMAGE_DATA;
-
-    // Create a GFile from the file path
-    let file = File::for_path(&expanded_svg_path);
-    let handle = match Handle::from_gfile_sync(&file, flags, None::<&gio::Cancellable>) {
-        Ok(Some(handle)) => handle,
-        Ok(None) => {
-            return Err("The SVG file is empty or could not be read.".into());
-        }
-        Err(e) => {
-            return Err(format!("Failed to read the SVG file: {:?}", e).into());
-        }
-    };
-
-    // Get the intrinsic size of the SVG in pixels
-    let (width, height) = handle
-        .intrinsic_size_in_pixels()
-        .ok_or("Failed to get intrinsic size")?;
-
-    // Create a PDF surface
-    let pdf_surface = cairo::PdfSurface::new(width as f64, height as f64, pdf_path)?;
-    let pdf_context = cairo::Context::new(&pdf_surface).unwrap();
-    // Define the viewport for rendering
-    let pdf_viewport = librsvg_rebind::Rectangle::new(0., 0., width as f64, height as f64);
-    // Render the SVG onto the PDF surface
-    handle.render_document(&pdf_context, &pdf_viewport)?;
-    // Finish the PDF surface to ensure all data is written
-    pdf_surface.finish();
-
-    // Remove the temporary expanded SVG file
-    fs::remove_file(&expanded_svg_path)?;
-
-    Ok(())
+struct PdfWriter {
+    buffer: Rc<RefCell<Cursor<Vec<u8>>>>,
 }
 
-fn merge_pdfs(
-    output_files: Vec<PathBuf>,
-    merged_output_path: &Path,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+impl Write for PdfWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.buffer.borrow_mut().write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.buffer.borrow_mut().flush()
+    }
+}
+
+pub fn render_svg_to_pdf(svg_content: &str) -> Result<Vec<u8>> {
+    use gio::prelude::Cast;
+    use gio::MemoryInputStream;
+    use glib::Bytes;
+    use rsvg::{CairoRenderer, Loader};
+
+    // Expand base64 encoded SVGs
+    let expanded_svg_content = expand_base64_svgs(svg_content)?;
+
+    let bytes = Bytes::from(expanded_svg_content.as_bytes());
+
+    // Create a MemoryInputStream from the Bytes
+    let input_stream = MemoryInputStream::from_bytes(&bytes);
+
+    // Upcast MemoryInputStream to gio::InputStream
+    let input_stream: gio::InputStream = input_stream.upcast();
+
+    // Now you can use the input_stream with the read_stream method
+    let handle = Loader::new()
+        .with_unlimited_size(true)
+        .keep_image_data(true);
+
+    // Create a Handle from the input stream
+    let handle =
+        match handle.read_stream(&input_stream, None::<&gio::File>, None::<&gio::Cancellable>) {
+            Ok(handle) => handle,
+            Err(e) => {
+                return Err(anyhow!("Failed to read the SVG content: {:?}", e));
+            }
+        };
+
+    let dimensions = CairoRenderer::new(&handle).intrinsic_dimensions();
+
+    let width = dimensions.width.length;
+    let height = dimensions.height.length;
+
+    // Create a vector to hold the PDF data
+    let buffer = Rc::new(RefCell::new(Cursor::new(Vec::new())));
+    let writer = PdfWriter {
+        buffer: Rc::clone(&buffer),
+    };
+
+    // Create a PDF surface that writes to the vector
+    let pdf_surface = cairo::PdfSurface::for_stream(width, height, writer)?;
+    let pdf_context = cairo::Context::new(&pdf_surface).unwrap();
+
+    // Define the viewport for rendering
+    let pdf_viewport = cairo::Rectangle::new(0., 0., width, height);
+
+    // Render the SVG onto the PDF surface
+    match rsvg::CairoRenderer::new(&handle).render_document(&pdf_context, &pdf_viewport) {
+        Ok(_) => {
+            // Finish the PDF surface to ensure all data is written
+            pdf_surface.finish();
+
+            // Clone the PDF data before returning
+            let pdf_data = buffer.borrow_mut().get_mut().clone();
+            Ok(pdf_data)
+        }
+        Err(e) => Err(anyhow!("Failed to render the PDF content: {:?}", e)),
+    }
+}
+
+pub fn merge_pdfs(output_files: Vec<&[u8]>) -> Result<Document> {
     let mut max_id = 1;
     let mut pagenum = 1;
     let mut documents_pages = BTreeMap::new();
@@ -155,7 +177,7 @@ fn merge_pdfs(
     let mut document = Document::with_version("1.5");
 
     for output_file in output_files {
-        let mut doc = Document::load(output_file)?;
+        let mut doc = Document::load_mem(output_file)?;
         let mut first = false;
         doc.renumber_objects_with(max_id);
 
@@ -164,7 +186,7 @@ fn merge_pdfs(
         documents_pages.extend(
             doc.get_pages()
                 .into_values()
-                .map(|object_id| {
+                .filter_map(|object_id| {
                     if !first {
                         let bookmark = lopdf::Bookmark::new(
                             format!("Page_{}", pagenum),
@@ -177,7 +199,10 @@ fn merge_pdfs(
                         pagenum += 1;
                     }
 
-                    (object_id, doc.get_object(object_id).unwrap().to_owned())
+                    match doc.get_object(object_id) {
+                        Ok(object) => Some((object_id, object.to_owned())),
+                        Err(_) => None,
+                    }
                 })
                 .collect::<BTreeMap<ObjectId, Object>>(),
         );
@@ -191,11 +216,7 @@ fn merge_pdfs(
         match object.type_name().unwrap_or("") {
             "Catalog" => {
                 catalog_object = Some((
-                    if let Some((id, _)) = catalog_object {
-                        id
-                    } else {
-                        *object_id
-                    },
+                    catalog_object.map_or(*object_id, |(id, _)| id),
                     object.clone(),
                 ));
             }
@@ -209,33 +230,29 @@ fn merge_pdfs(
                     }
 
                     pages_object = Some((
-                        if let Some((id, _)) = pages_object {
-                            id
-                        } else {
-                            *object_id
-                        },
+                        pages_object.map_or(*object_id, |(id, _)| id),
                         Object::Dictionary(dictionary),
                     ));
                 }
             }
-            "Page" => {}
-            "Outlines" => {}
-            "Outline" => {}
+            "Page" | "Outlines" | "Outline" => {}
             _ => {
                 document.objects.insert(*object_id, object.clone());
             }
         }
     }
 
-    if pages_object.is_none() {
-        println!("Pages root not found.");
-        return Ok(());
-    }
+    let pages_object = match pages_object {
+        Some(pages_object) => pages_object,
+        None => {
+            return Err(anyhow!("Pages root not found."));
+        }
+    };
 
     for (object_id, object) in documents_pages.iter() {
         if let Ok(dictionary) = object.as_dict() {
             let mut dictionary = dictionary.clone();
-            dictionary.set("Parent", pages_object.as_ref().unwrap().0);
+            dictionary.set("Parent", pages_object.0);
 
             document
                 .objects
@@ -243,13 +260,12 @@ fn merge_pdfs(
         }
     }
 
-    if catalog_object.is_none() {
-        println!("Catalog root not found.");
-        return Ok(());
-    }
-
-    let catalog_object = catalog_object.unwrap();
-    let pages_object = pages_object.unwrap();
+    let catalog_object = match catalog_object {
+        Some(catalog_object) => catalog_object,
+        None => {
+            return Err(anyhow!("Catalog root not found."));
+        }
+    };
 
     if let Ok(dictionary) = pages_object.1.as_dict() {
         let mut dictionary = dictionary.clone();
@@ -289,12 +305,11 @@ fn merge_pdfs(
     }
 
     document.compress();
-    document.save(merged_output_path)?;
 
-    Ok(())
+    Ok(document)
 }
 
-fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+fn main() -> Result<()> {
     let filter = EnvFilter::new("info");
 
     tracing_subscriber::fmt()
@@ -306,37 +321,67 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .nth(1)
         .expect("Please provide a directory path");
 
-    let output_files = Arc::new(Mutex::new(Vec::new()));
-
     let svg_entries: Vec<_> = WalkDir::new(&svg_dir)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|entry| entry.path().extension().and_then(|s| s.to_str()) == Some("svg"))
         .collect();
 
-    svg_entries
+    if svg_entries.is_empty() {
+        error!("No pages found.");
+        process::exit(1);
+    }
+
+    let rendered_pages: Vec<(PathBuf, Vec<u8>)> = svg_entries
         .par_iter()
-        .try_for_each(|entry| -> Result<(), Box<dyn Error + Send + Sync>> {
+        .filter_map(|entry| {
             let svg_path = entry.path();
-            let file_name = svg_path.file_stem().unwrap().to_str().unwrap();
-            let output_path = PathBuf::from(&svg_dir).join(format!("{}.pdf", file_name));
+            match read_to_string(svg_path) {
+                Ok(svg_content) => match render_svg_to_pdf(&svg_content) {
+                    Ok(pdf_data) => {
+                        info!("Rendering file: {:?}", &svg_path);
+                        Some((svg_path.to_path_buf(), pdf_data))
+                    }
+                    Err(e) => {
+                        error!("Error reading SVG file {:?}: {:?}", svg_path, e);
+                        process::exit(1)
+                    }
+                },
+                Err(e) => {
+                    error!("Error reading SVG file {:?}: {:?}", svg_path, e);
+                    process::exit(1)
+                }
+            }
+        })
+        .collect();
 
-            render_svg_to_pdf(svg_path.to_str().unwrap(), output_path.to_str().unwrap())?;
-            output_files.lock().unwrap().push(output_path);
-            Ok(())
-        })?;
-
-    let mut output_files = Arc::try_unwrap(output_files).unwrap().into_inner().unwrap();
-    output_files.sort();
+    // Sort the output files by their path
+    let mut output_files = rendered_pages;
+    output_files.sort_by_key(|(path, _)| path.clone());
 
     info!("Merging all files into a single report");
     let merged_output_path = PathBuf::from(&svg_dir).join("merged.pdf");
-    merge_pdfs(output_files.clone(), &merged_output_path)?;
+    let mut merged_pdf = merge_pdfs(
+        output_files
+            .iter()
+            .map(|(_, data)| data.as_slice())
+            .collect(),
+    )?;
 
-    for output_file in output_files {
-        info!("Cleaning file: {:?}", &output_file);
-        remove_file(output_file)?;
+    match merged_pdf.save(merged_output_path.clone()) {
+        Ok(_) => {
+            info!("Document converted successfuly.");
+        }
+        Err(e) => {
+            error!("Merging PDF error: {}", e);
+            process::exit(1);
+        }
     }
+
+    // for (path, _) in output_files {
+    //     info!("Cleaning file: {:?}", &path);
+    //     remove_file(path)?;
+    // }
 
     Ok(())
 }

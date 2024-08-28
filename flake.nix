@@ -1,42 +1,57 @@
 {
-  description = "A rust devShell";
+  description = "A rust dev shell";
 
   inputs = {
-    nixpkgs.url      = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     rust-overlay.url = "github:oxalica/rust-overlay";
-    flake-utils.url  = "github:numtide/flake-utils";
+    flake-utils = {
+      url = "github:numtide/flake-utils";
+      inputs.nixpkgs.follows = "nixkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
-    flake-utils.lib.eachDefaultSystem (system:
-      let
-        overlays = [ (import rust-overlay) ];
+  outputs = {
+    self,
+    nixpkgs,
+    rust-overlay,
+    flake-utils,
+    ...
+  }:
+    flake-utils.lib.eachDefaultSystem (
+      system: let
         pkgs = import nixpkgs {
-          inherit system overlays;
+          inherit system;
+          overlays = [
+            (import rust-overlay)
+          ];
         };
-      in
-      with pkgs;
-      {
-        devShells.default = mkShell {
-          buildInputs = [
-            openssl
-            pkg-config
-            eza
-            fd
-            cairo
-            librsvg
-
-            # Use rust package from rust-overlay
-            (rust-bin.beta.latest.default.override {
-              extensions = [ "rust-src" ];
+      in {
+        devShell = pkgs.mkShell {
+          nativeBuildInputs = with pkgs; [
+            (pkgs.rust-bin.stable.latest.default.override {
+                  extensions = [ "rust-src" "cargo" "rustc" ];
             })
+            gcc
+            cairo
+            pango
+            librsvg
+            libxml2
           ];
 
-          shellHook = ''
-            alias ls=exa
-            alias find=fd
-            export RUST_BACKTRACE=1
-          '';
+          RUST_SRC_PATH = "${pkgs.rust-bin.stable.latest.default.override {
+              extensions = [ "rust-src" ];
+          }}/lib/rustlib/src/rust/library";
+
+
+          buildInputs = with pkgs; [
+            openssl.dev
+            glib.dev
+            pkg-config
+
+            clippy
+            rust-analyzer
+            just
+          ];
         };
       }
     );

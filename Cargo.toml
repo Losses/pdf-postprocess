@@ -1,13 +1,15 @@
 [package]
 name = "pdf-postprocess"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0.86"
 base64 = "0.22.1"
 cairo-rs = { version = "0.20.1", features=["pdf", "png"]}
 gio = "0.20.1"
-librsvg-rebind = "0.1.0"
+librsvg = "2.59.0-beta.3"
+glib = "0.20.1"
 log = "0.4.22"
 lopdf = "0.33.0"
 rayon = "1.10.0"

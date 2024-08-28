@@ -41,6 +41,8 @@ This command will convert all SVG files in the `./svg-files` directory to PDFs a
 
 ### Building on Windows
 
+#### Building with MSYS2
+
 To build this project on Windows using MSYS2, follow these steps:
 
 1. **Install MSYS2**: Download and install MSYS2 from [msys2.org](https://www.msys2.org/).
@@ -67,6 +69,14 @@ To build this project on Windows using MSYS2, follow these steps:
    ```bash
    cargo build --release
    ```
+
+5. **Copy DLL files**: To ensure the program starts correctly, copy the necessary DLLs from `C:\msys64\mingw64\bin` to the directory where the binary is located. Otherwise, the program won't start, and you won't receive any error messages.
+
+#### Building with MSVC Toolchain
+
+You won't want to do this. vcpkg uses patched `msys2` packages to compile these dependencies, but their patches have obvious issues. Some DLLs still depend on `msys2`'s compilation results, and you won't get a usable binary.
+
+You have a life, stop harming yourself.
 
 ### Building on Linux
 
@@ -95,6 +105,11 @@ To build this project on Linux using Nix, follow these steps:
    ```
 
 ## Updates
+
+### Version 0.2.1
+
+- **Migrated to librsvg**: The rendering process has been updated to use the librsvg library instead of librsvg-rebind for a better development experience.
+- **Pipeline improvement**: All rendering processes now flow in memory without generating intermediate files.
 
 ### Version 0.2.0
 
