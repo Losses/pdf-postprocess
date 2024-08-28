@@ -1,3 +1,5 @@
+[![Stand With Ukraine](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/banner2-direct.svg)](https://stand-with-ukraine.pp.ua)
+
 # PDF-postprocess
 
 This project aims to address the limitations of typst in handling certain special styles, such as SVG files with unique formats or gradients with transparency. By exporting your typst document to SVG format and then using this program, you can convert the SVG files to PDFs that support these special formats using the librsvg library.
@@ -74,7 +76,7 @@ To build this project on Windows using MSYS2, follow these steps:
 
 #### Building with MSVC Toolchain
 
-You won't want to do this. vcpkg uses patched `msys2` packages to compile these dependencies, but their patches have obvious issues. Some DLLs still depend on `msys2`'s compilation results, and you won't get a usable binary.
+You won't want to do this. `vcpkg` uses patched `MSYS2` packages to compile these dependencies, but their patches have obvious issues. Some DLLs still depend on `MSYS2`'s compilation results, and you won't get a usable result.
 
 You have a life, stop harming yourself.
 
