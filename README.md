@@ -38,7 +38,7 @@ This command will convert all SVG files in the `./svg-files` directory to PDFs a
 
 ### Version 0.3.0
 
-- **Migrated to pdf2svg**: The rendering process has been updated to use the pdf2svg library.
+- **Migrated to svg2pdf**: The rendering process has been updated to use the svg2pdf library.
 
 ### Version 0.2.1
 
