@@ -1,9 +1,7 @@
-use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::fs::{read_to_string, remove_file};
-use std::io::{self, Cursor, Write};
+use std::fs::read_to_string;
+use std::io::Cursor;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::{process, str};
 
 use anyhow::{anyhow, Result};
@@ -11,6 +9,7 @@ use base64::Engine;
 use log::{error, info};
 use lopdf::{Document, Object, ObjectId};
 use rayon::prelude::*;
+use svg2pdf::{ConversionOptions, PageOptions};
 use tracing_subscriber::filter::EnvFilter;
 use walkdir::WalkDir;
 use xmltree::Element;
@@ -92,81 +91,17 @@ fn process_element(element: &mut Element) -> Result<()> {
     Ok(())
 }
 
-struct PdfWriter {
-    buffer: Rc<RefCell<Cursor<Vec<u8>>>>,
-}
-
-impl Write for PdfWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.buffer.borrow_mut().write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.buffer.borrow_mut().flush()
-    }
-}
-
 pub fn render_svg_to_pdf(svg_content: &str) -> Result<Vec<u8>> {
-    use gio::prelude::Cast;
-    use gio::MemoryInputStream;
-    use glib::Bytes;
-    use rsvg::{CairoRenderer, Loader};
-
     // Expand base64 encoded SVGs
     let expanded_svg_content = expand_base64_svgs(svg_content)?;
 
-    let bytes = Bytes::from(expanded_svg_content.as_bytes());
+    let mut options = svg2pdf::usvg::Options::default();
+    options.fontdb_mut().load_system_fonts();
+    let tree = svg2pdf::usvg::Tree::from_str(&expanded_svg_content, &options)?;
 
-    // Create a MemoryInputStream from the Bytes
-    let input_stream = MemoryInputStream::from_bytes(&bytes);
+    let pdf = svg2pdf::to_pdf(&tree, ConversionOptions::default(), PageOptions::default());
 
-    // Upcast MemoryInputStream to gio::InputStream
-    let input_stream: gio::InputStream = input_stream.upcast();
-
-    // Now you can use the input_stream with the read_stream method
-    let handle = Loader::new()
-        .with_unlimited_size(true)
-        .keep_image_data(true);
-
-    // Create a Handle from the input stream
-    let handle =
-        match handle.read_stream(&input_stream, None::<&gio::File>, None::<&gio::Cancellable>) {
-            Ok(handle) => handle,
-            Err(e) => {
-                return Err(anyhow!("Failed to read the SVG content: {:?}", e));
-            }
-        };
-
-    let dimensions = CairoRenderer::new(&handle).intrinsic_dimensions();
-
-    let width = dimensions.width.length;
-    let height = dimensions.height.length;
-
-    // Create a vector to hold the PDF data
-    let buffer = Rc::new(RefCell::new(Cursor::new(Vec::new())));
-    let writer = PdfWriter {
-        buffer: Rc::clone(&buffer),
-    };
-
-    // Create a PDF surface that writes to the vector
-    let pdf_surface = cairo::PdfSurface::for_stream(width, height, writer)?;
-    let pdf_context = cairo::Context::new(&pdf_surface).unwrap();
-
-    // Define the viewport for rendering
-    let pdf_viewport = cairo::Rectangle::new(0., 0., width, height);
-
-    // Render the SVG onto the PDF surface
-    match rsvg::CairoRenderer::new(&handle).render_document(&pdf_context, &pdf_viewport) {
-        Ok(_) => {
-            // Finish the PDF surface to ensure all data is written
-            pdf_surface.finish();
-
-            // Clone the PDF data before returning
-            let pdf_data = buffer.borrow_mut().get_mut().clone();
-            Ok(pdf_data)
-        }
-        Err(e) => Err(anyhow!("Failed to render the PDF content: {:?}", e)),
-    }
+    Ok(pdf)
 }
 
 pub fn merge_pdfs(output_files: Vec<&[u8]>) -> Result<Document> {

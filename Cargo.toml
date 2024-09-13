@@ -1,18 +1,15 @@
 [package]
 name = "pdf-postprocess"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
 anyhow = "1.0.86"
 base64 = "0.22.1"
-cairo-rs = { version = "0.20.1", features=["pdf", "png"]}
-gio = "0.20.1"
-librsvg = "2.59.0-beta.3"
-glib = "0.20.1"
 log = "0.4.22"
 lopdf = "0.33.0"
 rayon = "1.10.0"
 tracing-subscriber = { version = "0.3.18", features=["env-filter"]}
 walkdir = "2.5.0"
 xmltree = "0.10.3"
+svg2pdf = "0.11.0"

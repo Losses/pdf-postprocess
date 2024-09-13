@@ -2,18 +2,13 @@
 
 # PDF-postprocess
 
-This project aims to address the limitations of typst in handling certain special styles, such as SVG files with unique formats or gradients with transparency. By exporting your typst document to SVG format and then using this program, you can convert the SVG files to PDFs that support these special formats using the librsvg library.
+This project aims to address the limitations of typst in handling certain special styles, such as SVG files with unique formats or gradients with transparency. By exporting your typst document to SVG format and then using this program, you can convert the SVG files to PDFs that support these special formats using the svg2pdf library.
 
 ## Features
 
 - Converts SVG files to PDFs while retaining special styles.
 - Merges multiple SVG files into a single document.
-- Utilizes the librsvg library for rendering.
-
-## Requirements
-
-- Rust (for building the project)
-- librsvg installed on the system
+- Utilizes the svg2pdf library for rendering.
 
 ## Usage
 
@@ -39,74 +34,11 @@ This project aims to address the limitations of typst in handling certain specia
 
 This command will convert all SVG files in the `./svg-files` directory to PDFs and save them in the same directory. Additionally, it will merge all the PDFs into a single file named `merged.pdf` in the same directory.
 
-## Building
-
-### Building on Windows
-
-#### Building with MSYS2
-
-To build this project on Windows using MSYS2, follow these steps:
-
-1. **Install MSYS2**: Download and install MSYS2 from [msys2.org](https://www.msys2.org/).
-
-2. **Update the package database and core system packages**:
-
-   ```bash
-   pacman -Syu
-   ```
-
-3. **Install the necessary dependencies**:
-
-   ```bash
-   pacman -S mingw-w64-x86_64-pkg-config
-   pacman -S mingw-w64-x86_64-glib2
-   pacman -S mingw-w64-x86_64-cairo
-   pacman -S mingw-w64-x86_64-gdk-pixbuf2
-   pacman -S mingw-w64-x86_64-librsvg
-   pacman -S mingw-w64-x86_64-rust-src
-   ```
-
-4. **Build the project**:
-
-   ```bash
-   cargo build --release
-   ```
-
-5. **Copy DLL files**: To ensure the program starts correctly, copy the necessary DLLs from `C:\msys64\mingw64\bin` to the directory where the binary is located. Otherwise, the program won't start, and you won't receive any error messages.
-
-#### Building with MSVC Toolchain
-
-You won't want to do this. `vcpkg` uses patched `MSYS2` packages to compile these dependencies, but their patches have obvious issues. Some DLLs still depend on `MSYS2`'s compilation results, and you won't get a usable result.
-
-You have a life, stop harming yourself.
-
-### Building on Linux
-
-To build this project on Linux using Nix, follow these steps:
-
-1. **Install Nix**: Follow the instructions on [nixos.org](https://nixos.org/download.html) to install Nix.
-
-2. **Enable Flakes**: Make sure flakes are enabled in your Nix configuration. You can do this by adding the following lines to your `~/.config/nix/nix.conf`:
-
-   ```plaintext
-   experimental-features = nix-command flakes
-   ```
-
-3. **Clone the repository and enter the Nix shell**:
-
-   ```bash
-   git clone https://github.com/Losses/pdf-postprocess.git
-   cd pdf-postprocess
-   nix develop
-   ```
-
-4. **Build the project**:
-
-   ```bash
-   cargo build --release
-   ```
-
 ## Updates
+
+### Version 0.3.0
+
+- **Migrated to pdf2svg**: The rendering process has been updated to use the pdf2svg library.
 
 ### Version 0.2.1
 
@@ -115,7 +47,7 @@ To build this project on Linux using Nix, follow these steps:
 
 ### Version 0.2.0
 
-- **Migrated to librsvg**: The rendering process has been updated to use the librsvg library instead of the Chromium browser. This change makes the rendering process more lightweight and efficient.
+- **Migrated to librsvg-rebind**: The rendering process has been updated to use the librsvg library instead of the Chromium browser. This change makes the rendering process more lightweight and efficient.
 - **Base64 SVG Expansion**: Added functionality to decode base64-encoded SVG images embedded within the main SVG file to prevent common bugs happens on librsvg.
 
 ## License
@@ -128,6 +60,6 @@ Contributions are welcome! Please open an issue or submit a pull request for any
 
 ## Acknowledgments
 
-- [librsvg](https://gnome.pages.gitlab.gnome.org/librsvg/Rsvg-2.0/index.html) for SVG rendering.
+- [svg2pdf](https://docs.rs/svg2pdf/latest/svg2pdf/) for SVG rendering.
 - [lopdf](https://docs.rs/lopdf/latest/lopdf/) for PDF manipulation.
 - [walkdir](https://docs.rs/walkdir/latest/walkdir/) for directory traversal.
